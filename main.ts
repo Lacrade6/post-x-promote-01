@@ -32,10 +32,13 @@ interface Checks {
   urlIsString: boolean;
   urlNotEmpty: boolean;
   urlMatchesPostPattern: boolean;
+  statusIdPresentAndDigits: boolean;
+  onlyKnownKeys: boolean;
 }
 
 interface Validation {
   url: string;
+  post_id: string;
   valid: boolean;
   checks: Checks;
 }
@@ -55,21 +58,44 @@ function buildValidation(raw: unknown): Validation {
   const urlNotEmpty = urlIsString && url.length > 0;
   const urlMatchesPostPattern = urlNotEmpty && POST_URL_PATTERN.test(url);
 
+  // The status id is the part after "/status/": it must be present
+  // and digits only. An empty id (".../status/") or a non-numeric
+  // one (".../status/abc") is not a real post URL, even if the rest
+  // of the URL looks right.
+  const statusSegment = url.includes('/status/')
+    ? url.slice(url.lastIndexOf('/status/') + '/status/'.length)
+    : '';
+  const statusIdPresentAndDigits = /^[0-9]+$/.test(statusSegment);
+
+  // POST.json must contain exactly the `url` key: any extra key is
+  // a typo or a stale field, and must fail loudly instead of being
+  // silently ignored.
+  const onlyKnownKeys =
+    isObject && Object.keys(record).every((key) => key === 'url');
+
+  // The post id is only meaningful once the whole URL is a real
+  // post URL; otherwise it stays empty so no bad id leaks out.
+  const postId = urlMatchesPostPattern ? statusSegment : '';
+
   const checks: Checks = {
     isObject,
     hasUrl,
     urlIsString,
     urlNotEmpty,
     urlMatchesPostPattern,
+    statusIdPresentAndDigits,
+    onlyKnownKeys,
   };
   const valid =
     checks.isObject &&
     checks.hasUrl &&
     checks.urlIsString &&
     checks.urlNotEmpty &&
-    checks.urlMatchesPostPattern;
+    checks.urlMatchesPostPattern &&
+    checks.statusIdPresentAndDigits &&
+    checks.onlyKnownKeys;
 
-  return { url, valid, checks };
+  return { url, post_id: postId, valid, checks };
 }
 
 function main(): void {
@@ -107,7 +133,9 @@ function main(): void {
       .join(', ');
     fail(
       `POST.json failed validation (failed checks: ${failed}); ` +
-        `url was ${JSON.stringify(validation.url)}`,
+        `url was ${JSON.stringify(validation.url)}. ` +
+        `Expected a URL like https://x.com/<handle>/status/<digits>, ` +
+        `for example https://x.com/perbedaxan/status/2125132982956802451`,
     );
   }
 
